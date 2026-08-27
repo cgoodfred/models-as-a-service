@@ -6,24 +6,32 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/opendatahub-io/models-as-a-service/maas-api/internal/constant"
 	"github.com/opendatahub-io/models-as-a-service/maas-api/internal/logger"
 	"github.com/opendatahub-io/models-as-a-service/maas-api/internal/token"
 )
+
+// MetricsRecorder is the subset of metrics.MetricsRecorder used by this handler.
+type MetricsRecorder interface {
+	RecordRejection(reason string)
+}
 
 // Handler handles subscription selection requests.
 type Handler struct {
 	selector *Selector
 	logger   *logger.Logger
+	metrics  MetricsRecorder
 }
 
 // NewHandler creates a new subscription handler.
-func NewHandler(log *logger.Logger, selector *Selector) *Handler {
+func NewHandler(log *logger.Logger, selector *Selector, metrics MetricsRecorder) *Handler {
 	if log == nil {
 		log = logger.Production()
 	}
 	return &Handler{
 		selector: selector,
 		logger:   log,
+		metrics:  metrics,
 	}
 }
 
@@ -80,6 +88,9 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		var modelUnhealthyErr *ModelUnhealthyError
 
 		if errors.As(err, &noSubErr) {
+			if h.metrics != nil {
+				h.metrics.RecordRejection(constant.RejectionNoCapacity)
+			}
 			h.logger.Debug("No subscription found for user",
 				"username", logger.RedactValue(req.Username),
 				"groups", req.Groups,
@@ -92,6 +103,9 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		}
 
 		if errors.As(err, &notFoundErr) {
+			if h.metrics != nil {
+				h.metrics.RecordRejection(constant.RejectionNoCapacity)
+			}
 			h.logger.Debug("Requested subscription not found",
 				"subscription", req.RequestedSubscription,
 			)
@@ -103,6 +117,9 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		}
 
 		if errors.As(err, &accessDeniedErr) {
+			if h.metrics != nil {
+				h.metrics.RecordRejection(constant.RejectionUnauthorized)
+			}
 			h.logger.Debug("Access denied to subscription",
 				"username", logger.RedactValue(req.Username),
 				"subscription", req.RequestedSubscription,
@@ -127,6 +144,9 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		}
 
 		if errors.As(err, &modelNotInSubErr) {
+			if h.metrics != nil {
+				h.metrics.RecordRejection(constant.RejectionNoCapacity)
+			}
 			h.logger.Debug("Model not included in subscription",
 				"subscription", modelNotInSubErr.Subscription,
 				"model", modelNotInSubErr.Model,
@@ -139,6 +159,14 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		}
 
 		if errors.As(err, &modelUnhealthyErr) {
+			if h.metrics != nil {
+				// Rate limit not enforced means rate limiting cannot be enforced
+				if modelUnhealthyErr.Reason == "RateLimitNotEnforced" {
+					h.metrics.RecordRejection(constant.RejectionRateLimited)
+				} else {
+					h.metrics.RecordRejection(constant.RejectionNoCapacity)
+				}
+			}
 			h.logger.Debug("Requested model is unhealthy",
 				"subscription", modelUnhealthyErr.Subscription,
 				"phase", modelUnhealthyErr.Phase,

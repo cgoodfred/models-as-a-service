@@ -174,3 +174,80 @@ func TestDurationHistogramObserved(t *testing.T) {
 	}
 	assert.True(t, found, "histogram metric not found in registry")
 }
+
+func TestRecordRequest(t *testing.T) {
+	r, reg := newTestRecorder(t)
+
+	r.RecordRequest("GET", "200", 150*time.Millisecond)
+	r.RecordRequest("GET", "200", 250*time.Millisecond)
+	r.RecordRequest("POST", "201", 50*time.Millisecond)
+
+	assert.InDelta(t, float64(2), gatherMetricValue(t, reg, "maas_requests_total",
+		map[string]string{"method": "GET", "status": "200"}), 0)
+	assert.InDelta(t, float64(1), gatherMetricValue(t, reg, "maas_requests_total",
+		map[string]string{"method": "POST", "status": "201"}), 0)
+}
+
+func TestRecordRequestHistogram(t *testing.T) {
+	r, reg := newTestRecorder(t)
+
+	r.RecordRequest("GET", "200", 150*time.Millisecond)
+
+	families, err := reg.Gather()
+	require.NoError(t, err)
+
+	var found bool
+	for _, f := range families {
+		if f.GetName() == "maas_request_duration_seconds" {
+			found = true
+			require.Len(t, f.GetMetric(), 1)
+			assert.Equal(t, uint64(1), f.GetMetric()[0].GetHistogram().GetSampleCount())
+		}
+	}
+	assert.True(t, found, "maas_request_duration_seconds histogram not found")
+}
+
+func TestRecordRejection(t *testing.T) {
+	r, reg := newTestRecorder(t)
+
+	r.RecordRejection("unauthorized")
+	r.RecordRejection("unauthorized")
+	r.RecordRejection("rate-limited")
+	r.RecordRejection("no-capacity")
+
+	assert.InDelta(t, float64(2), gatherMetricValue(t, reg, "maas_request_rejections_total",
+		map[string]string{"reason": "unauthorized"}), 0)
+	assert.InDelta(t, float64(1), gatherMetricValue(t, reg, "maas_request_rejections_total",
+		map[string]string{"reason": "rate-limited"}), 0)
+	assert.InDelta(t, float64(1), gatherMetricValue(t, reg, "maas_request_rejections_total",
+		map[string]string{"reason": "no-capacity"}), 0)
+}
+
+func TestRejectionLabelsPreInitialized(t *testing.T) {
+	_, reg := newTestRecorder(t)
+
+	families, err := reg.Gather()
+	require.NoError(t, err)
+
+	var rejectionMetric *struct{}
+	reasons := make(map[string]bool)
+
+	for _, f := range families {
+		if f.GetName() == "maas_request_rejections_total" {
+			rejectionMetric = &struct{}{}
+			for _, m := range f.GetMetric() {
+				for _, lp := range m.GetLabel() {
+					if lp.GetName() == "reason" {
+						reasons[lp.GetValue()] = true
+					}
+				}
+			}
+		}
+	}
+
+	require.NotNil(t, rejectionMetric, "maas_request_rejections_total not found")
+	assert.True(t, reasons["rate-limited"], "rate-limited label not pre-initialized")
+	assert.True(t, reasons["unauthorized"], "unauthorized label not pre-initialized")
+	assert.True(t, reasons["no-capacity"], "no-capacity label not pre-initialized")
+	assert.True(t, reasons["quota-exceeded"], "quota-exceeded label not pre-initialized")
+}

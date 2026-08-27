@@ -15,6 +15,8 @@ import (
 
 type mockRecorder struct {
 	durations   []recordedDuration
+	requests    []recordedRequest
+	rejections  []string
 	inFlightInc []string
 	inFlightDec []string
 }
@@ -24,8 +26,21 @@ type recordedDuration struct {
 	duration                      time.Duration
 }
 
+type recordedRequest struct {
+	method, status string
+	duration       time.Duration
+}
+
 func (m *mockRecorder) RecordRequestDuration(method, route, status, tenant string, d time.Duration) {
 	m.durations = append(m.durations, recordedDuration{method, route, status, tenant, d})
+}
+
+func (m *mockRecorder) RecordRequest(method, status string, d time.Duration) {
+	m.requests = append(m.requests, recordedRequest{method, status, d})
+}
+
+func (m *mockRecorder) RecordRejection(reason string) {
+	m.rejections = append(m.rejections, reason)
 }
 
 func (m *mockRecorder) IncrementInFlight(method string) {
@@ -102,4 +117,19 @@ func TestMiddlewareUnmatchedRoute(t *testing.T) {
 
 	assert.Len(t, mock.durations, 1)
 	assert.Equal(t, "unmatched", mock.durations[0].route)
+}
+
+func TestMiddlewareRecordsRequest(t *testing.T) {
+	mock := &mockRecorder{}
+	router := setupTestRouter(mock)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/models", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Len(t, mock.requests, 1)
+	assert.Equal(t, "GET", mock.requests[0].method)
+	assert.Equal(t, "200", mock.requests[0].status)
+	assert.Greater(t, mock.requests[0].duration, time.Duration(0))
 }

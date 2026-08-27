@@ -8,4 +8,6 @@ type MetricsRecorder interface {
 	RecordTokenMint(tenant, result string)
 	IncrementInFlight(method string)
 	DecrementInFlight(method string)
+	RecordRequest(method, statusCode string, duration time.Duration)
+	RecordRejection(reason string)
 }
