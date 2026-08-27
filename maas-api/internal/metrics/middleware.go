@@ -27,6 +27,6 @@ func NewMiddleware(recorder MetricsRecorder, defaultTenant string) gin.HandlerFu
 
 		status := strconv.Itoa(c.Writer.Status())
 		recorder.RecordRequestDuration(method, route, status, defaultTenant, duration)
-		recorder.RecordRequest(method, status, duration)
+		recorder.RecordRequest(duration)
 	}
 }

@@ -44,8 +44,7 @@ func TestMiddleware_UsesConfiguredTenantRegardlessOfUserContext(t *testing.T) {
 	assert.InDelta(t, float64(1), val, 0)
 
 	// Verify new maas_requests_total metric is also populated
-	maasVal := gatherMetricValue(t, reg, "maas_requests_total",
-		map[string]string{"method": "GET", "status": "200"})
+	maasVal := gatherMetricValue(t, reg, "maas_requests_total", nil)
 	assert.InDelta(t, float64(1), maasVal, 0)
 }
 
@@ -74,7 +73,6 @@ func TestMiddleware_DefaultTenantWhenNoUserContext(t *testing.T) {
 	assert.InDelta(t, float64(1), val, 0)
 
 	// Verify new maas_requests_total metric is also populated
-	maasVal := gatherMetricValue(t, reg, "maas_requests_total",
-		map[string]string{"method": "GET", "status": "200"})
+	maasVal := gatherMetricValue(t, reg, "maas_requests_total", nil)
 	assert.InDelta(t, float64(1), maasVal, 0)
 }

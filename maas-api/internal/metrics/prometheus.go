@@ -15,9 +15,16 @@ type PrometheusRecorder struct {
 	inFlight              *prometheus.GaugeVec
 	keyValidation         *prometheus.CounterVec
 	tokenMint             *prometheus.CounterVec
-	maasRequestsTotal     *prometheus.CounterVec
-	maasRequestDuration   *prometheus.HistogramVec
+	maasRequestsTotal     prometheus.Counter
+	maasRequestDuration   prometheus.Histogram
 	maasRequestRejections *prometheus.CounterVec
+}
+
+var allowedRejectionReasons = map[string]struct{}{
+	constant.RejectionRateLimited:   {},
+	constant.RejectionUnauthorized:  {},
+	constant.RejectionNoCapacity:    {},
+	constant.RejectionQuotaExceeded: {},
 }
 
 func NewPrometheusRecorder(reg prometheus.Registerer) (*PrometheusRecorder, error) {
@@ -50,16 +57,18 @@ func NewPrometheusRecorder(reg prometheus.Registerer) (*PrometheusRecorder, erro
 		Help: "Total number of API key mints by tenant and result.",
 	}, []string{"tenant_name", "result"})
 
-	maasRequestsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
+	// Unlabeled so a representative scrape stays under the 20-series ceiling.
+	// Histogram (not HistogramVec) materializes every bucket at Register.
+	maasRequestsTotal := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "maas_requests_total",
 		Help: "Total number of HTTP requests served.",
-	}, []string{"method", "status"})
+	})
 
-	maasRequestDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	maasRequestDuration := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "maas_request_duration_seconds",
 		Help:    "HTTP request latency in seconds.",
 		Buckets: prometheus.DefBuckets,
-	}, []string{"method", "status"})
+	})
 
 	maasRequestRejections := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "maas_request_rejections_total",
@@ -72,7 +81,6 @@ func NewPrometheusRecorder(reg prometheus.Registerer) (*PrometheusRecorder, erro
 		}
 	}
 
-	// Pre-initialize rejection reason labels
 	maasRequestRejections.WithLabelValues(constant.RejectionRateLimited)
 	maasRequestRejections.WithLabelValues(constant.RejectionUnauthorized)
 	maasRequestRejections.WithLabelValues(constant.RejectionNoCapacity)
@@ -111,11 +119,14 @@ func (r *PrometheusRecorder) DecrementInFlight(method string) {
 	r.inFlight.WithLabelValues(method).Dec()
 }
 
-func (r *PrometheusRecorder) RecordRequest(method, statusCode string, duration time.Duration) {
-	r.maasRequestsTotal.WithLabelValues(method, statusCode).Inc()
-	r.maasRequestDuration.WithLabelValues(method, statusCode).Observe(duration.Seconds())
+func (r *PrometheusRecorder) RecordRequest(duration time.Duration) {
+	r.maasRequestsTotal.Inc()
+	r.maasRequestDuration.Observe(duration.Seconds())
 }
 
 func (r *PrometheusRecorder) RecordRejection(reason string) {
+	if _, ok := allowedRejectionReasons[reason]; !ok {
+		return
+	}
 	r.maasRequestRejections.WithLabelValues(reason).Inc()
 }

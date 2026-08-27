@@ -74,7 +74,7 @@ func TestMetricsServerIntegration(t *testing.T) {
 	assert.Contains(t, bodyStr, "maas_api_http_request_duration_seconds")
 
 	// Verify new metrics are also present
-	assert.Contains(t, bodyStr, `maas_requests_total{method="GET",status="200"} 1`)
+	assert.Contains(t, bodyStr, `maas_requests_total 1`)
 	assert.Contains(t, bodyStr, "maas_request_duration_seconds")
 	assert.Contains(t, bodyStr, "maas_request_rejections_total")
 }

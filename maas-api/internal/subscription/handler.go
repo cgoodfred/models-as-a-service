@@ -88,9 +88,7 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		var modelUnhealthyErr *ModelUnhealthyError
 
 		if errors.As(err, &noSubErr) {
-			if h.metrics != nil {
-				h.metrics.RecordRejection(constant.RejectionNoCapacity)
-			}
+			h.recordRejection(constant.RejectionNoCapacity)
 			h.logger.Debug("No subscription found for user",
 				"username", logger.RedactValue(req.Username),
 				"groups", req.Groups,
@@ -103,9 +101,7 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		}
 
 		if errors.As(err, &notFoundErr) {
-			if h.metrics != nil {
-				h.metrics.RecordRejection(constant.RejectionNoCapacity)
-			}
+			h.recordRejection(constant.RejectionNoCapacity)
 			h.logger.Debug("Requested subscription not found",
 				"subscription", req.RequestedSubscription,
 			)
@@ -117,9 +113,7 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		}
 
 		if errors.As(err, &accessDeniedErr) {
-			if h.metrics != nil {
-				h.metrics.RecordRejection(constant.RejectionUnauthorized)
-			}
+			h.recordRejection(constant.RejectionUnauthorized)
 			h.logger.Debug("Access denied to subscription",
 				"username", logger.RedactValue(req.Username),
 				"subscription", req.RequestedSubscription,
@@ -144,9 +138,7 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		}
 
 		if errors.As(err, &modelNotInSubErr) {
-			if h.metrics != nil {
-				h.metrics.RecordRejection(constant.RejectionNoCapacity)
-			}
+			h.recordRejection(constant.RejectionNoCapacity)
 			h.logger.Debug("Model not included in subscription",
 				"subscription", modelNotInSubErr.Subscription,
 				"model", modelNotInSubErr.Model,
@@ -159,14 +151,7 @@ func (h *Handler) SelectSubscription(c *gin.Context) {
 		}
 
 		if errors.As(err, &modelUnhealthyErr) {
-			if h.metrics != nil {
-				// Rate limit not enforced means rate limiting cannot be enforced
-				if modelUnhealthyErr.Reason == "RateLimitNotEnforced" {
-					h.metrics.RecordRejection(constant.RejectionRateLimited)
-				} else {
-					h.metrics.RecordRejection(constant.RejectionNoCapacity)
-				}
-			}
+			h.recordUnhealthyRejection(modelUnhealthyErr)
 			h.logger.Debug("Requested model is unhealthy",
 				"subscription", modelUnhealthyErr.Subscription,
 				"phase", modelUnhealthyErr.Phase,
@@ -292,4 +277,21 @@ func (h *Handler) ListSubscriptionsForModel(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, subs)
+}
+
+func (h *Handler) recordRejection(reason string) {
+	if h.metrics != nil {
+		h.metrics.RecordRejection(reason)
+	}
+}
+
+func (h *Handler) recordUnhealthyRejection(err *ModelUnhealthyError) {
+	switch {
+	case err.Reason == "RateLimitNotEnforced":
+		h.recordRejection(constant.RejectionRateLimited)
+	case err.Phase == PhaseFailed:
+		h.recordRejection(constant.RejectionQuotaExceeded)
+	default:
+		h.recordRejection(constant.RejectionNoCapacity)
+	}
 }

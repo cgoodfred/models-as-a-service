@@ -1591,3 +1591,69 @@ func TestHandler_SelectSubscription_RecordsNoCapacityForModelNotInSubscription(t
 		t.Errorf("expected rejection reason 'no-capacity', got %s", metrics.rejections[0])
 	}
 }
+
+func TestHandler_SelectSubscription_RecordsQuotaExceededForFailedPhase(t *testing.T) {
+	metrics := &mockMetricsRecorder{}
+	lister := &fakeLister{subscriptions: []*unstructured.Unstructured{
+		createSubscriptionWithHealth("failed-sub", []string{"basic-users"}, nil, 10, defaultTestTokenRateLimit, phaseFailed, false, false),
+	}}
+	router := setupTestRouterWithMetrics(lister, metrics)
+
+	reqBody := `{
+		"username": "alice",
+		"groups": ["basic-users"],
+		"requestedModel": "test-model"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/subscriptions/select", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if len(metrics.rejections) != 1 {
+		t.Fatalf("expected 1 rejection recorded, got %d", len(metrics.rejections))
+	}
+	if metrics.rejections[0] != "quota-exceeded" {
+		t.Errorf("expected rejection reason 'quota-exceeded', got %s", metrics.rejections[0])
+	}
+}
+
+func TestHandler_SelectSubscription_RecordsRateLimitedForTRLPNotReady(t *testing.T) {
+	metrics := &mockMetricsRecorder{}
+	lister := &fakeLister{subscriptions: []*unstructured.Unstructured{
+		createSubscriptionWithTRLPStatus("degraded-sub", []string{"basic-users"}, phaseDegraded, []map[string]any{
+			{
+				"name":      "model-a",
+				"namespace": "ns",
+				"ready":     true,
+				"reason":    "Valid",
+			},
+		}, []map[string]any{
+			{
+				"model":     "model-a",
+				"name":      "maas-trlp-model-a",
+				"namespace": "ns",
+				"ready":     false,
+				"reason":    "NotAccepted",
+				"message":   "status not available",
+			},
+		}),
+	}}
+	router := setupTestRouterWithMetrics(lister, metrics)
+
+	reqBody := `{
+		"username": "alice",
+		"groups": ["basic-users"],
+		"requestedModel": "ns/model-a"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/subscriptions/select", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if len(metrics.rejections) != 1 {
+		t.Fatalf("expected 1 rejection recorded, got %d", len(metrics.rejections))
+	}
+	if metrics.rejections[0] != "rate-limited" {
+		t.Errorf("expected rejection reason 'rate-limited', got %s", metrics.rejections[0])
+	}
+}
